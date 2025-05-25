@@ -1,2 +1,0 @@
-[04:07:59] [WARNING]: LLMThread did not stop gracefully.
-[04:08:06] [WARNING]: LLMThread did not stop gracefully.

@@ -23,3 +23,5 @@ Thumbs.db
 .env
 venv
 ._codebase_digest.txt
+input/
+output/
