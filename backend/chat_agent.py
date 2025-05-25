@@ -1,3 +1,4 @@
+import threading
 import json
 import queue
 import time
@@ -17,6 +18,9 @@ class ChatThread(QThread):
         self.content_title = content_title
         self.external_context = external_context
 
+        # ADDED: Event for responsive shutdown
+        self._stop_event = threading.Event()
+
         self.system_prompt = """
 You are an AI assistant helping a user understand a story by answering questions based on the transcript history and a narrative cheat sheet.
 
@@ -26,7 +30,7 @@ External context about the content:
 {external_context}
 ---
 
-Answer user questions using the provided transcript history and cheat sheet. Provide concise, relevant answers in plain text.
+Answer user questions using the provided transcript history and cheat sheet. Provide detailled, relevant answers in plain text.
 """.format(content_title=self.content_title, external_context=self.external_context)
 
     def add_chat_query(self, query):
@@ -34,9 +38,14 @@ Answer user questions using the provided transcript history and cheat sheet. Pro
 
     def run(self):
         self.running = True
+        # ADDED: Clear stop event at the start of run
+        self._stop_event.clear()
+
         while self.running:
             try:
-                query = self.chat_queue.get_nowait()
+                # Changed to get with timeout to be responsive to stop signals
+                query = self.chat_queue.get(timeout=0.1) 
+                
                 transcripts = self.transcript_getter()
                 recent_transcripts = transcripts[-5:] if len(transcripts) > 5 else transcripts
                 current_entities = self.entities_getter()
@@ -59,8 +68,14 @@ Answer user questions using the provided transcript history and cheat sheet. Pro
                     self.chat_response.emit(f"Error: Unable to process query - {str(e)}")
                     self.chat_log.emit({"type": "error", "message": f"Chat Error: {str(e)}"})
             except queue.Empty:
-                pass
-            time.sleep(0.5)
+                # If queue is empty (no chat query), check if stop event is set
+                if self._stop_event.is_set():
+                    self.chat_log.emit({"type": "status", "message": "Chat Thread received stop signal during idle, exiting."})
+                    break # Exit the loop immediately
+            # REMOVED: original time.sleep(0.5) as get(timeout) handles idle waiting.
+            # If the queue wasn't empty, processing might take time, so no additional sleep is needed.
 
     def stop(self):
         self.running = False
+        # ADDED: Set stop event to signal termination
+        self._stop_event.set()

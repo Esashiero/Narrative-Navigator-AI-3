@@ -1,0 +1,20 @@
+[
+  {
+    "base_importance_score": 4,
+    "description": "A primatid is a genetically engineered creature.",
+    "first_mentioned_idx": 0,
+    "mention_count": 0,
+    "name": "Primatid",
+    "type": "Concepts/Events",
+    "current_importance_score": 4
+  },
+  {
+    "base_importance_score": 8,
+    "description": "A mysterious substance that allows the protagonist to walk on water.",
+    "first_mentioned_idx": 0,
+    "mention_count": 1,
+    "name": "Reagent",
+    "type": "Key Objects",
+    "current_importance_score": 9
+  }
+]

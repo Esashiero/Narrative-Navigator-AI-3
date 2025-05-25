@@ -3,6 +3,7 @@ import json
 import numpy as np
 import time 
 from datetime import datetime
+import os # Import the os module for path operations
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
@@ -38,12 +39,23 @@ class NarrativeNavigator(QMainWindow):
         
         self.cheat_sheet_column_widths = {} 
 
+        # File paths for output
+        self.output_dir = None
+        self.transcript_file_path = None
+        self.cheat_sheet_file_path = None
+        self.alias_map_file_path = None
+        self.raw_llm_log_file_path = None 
+        self.error_warnings_file_path = None 
+
         self.init_ui()
 
+        # Connect signals from backend threads to UI update slots
         self.audio_thread.audio_data.connect(self.transcription_thread.add_audio)
         self.audio_thread.error_signal.connect(lambda msg: self.update_llm_log_tabs({"type": "error", "message": msg})) 
+        
         self.transcription_thread.transcription.connect(self.handle_transcription)
         self.transcription_thread.error_signal.connect(lambda msg: self.update_llm_log_tabs({"type": "error", "message": msg}))
+        
         self.llm_thread.entities_updated.connect(self.update_entity_displays) 
         self.llm_thread.llm_log.connect(self.update_llm_log_tabs)
 
@@ -68,7 +80,7 @@ class NarrativeNavigator(QMainWindow):
         app_name_label = QLabel("Narrative Navigator")
         app_name_label.setObjectName("appNameLabel")
 
-        self.analysis_status_label = QLabel("Analyzing: [FULL] Beyond Boiling Point - Gordon Ramsay documentary (2000)")
+        self.analysis_status_label = QLabel("Analyzing: [Awaiting Content Title]") 
         self.analysis_status_label.setObjectName("analysisStatusLabel")
         self.analysis_status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.analysis_status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -83,10 +95,10 @@ class NarrativeNavigator(QMainWindow):
         self.volume_button.setIconSize(QSize(20, 20))
         self.volume_button.setFixedSize(36, 36)
 
-        self.toggle_button = QPushButton("Stop Recording")
+        self.toggle_button = QPushButton("Start Recording") 
         self.toggle_button.setObjectName("stopRecordingButton")
         self.toggle_button.clicked.connect(self.toggle_processing)
-        self.toggle_button.setEnabled(False)
+        self.toggle_button.setEnabled(False) 
 
         self.close_button = QPushButton()
         self.close_button.setIcon(self.style().standardIcon(QStyle.SP_DialogCloseButton))
@@ -436,24 +448,116 @@ class NarrativeNavigator(QMainWindow):
         tab_layout.addWidget(self.llm_log_tabs)
         return tab_page
 
+    def _setup_output_directory(self, base_title):
+        """
+        Creates a unique output directory for the current session.
+        Handles existing directories by appending a number.
+        Sets all file paths.
+        """
+        base_output_folder = "output"
+        os.makedirs(base_output_folder, exist_ok=True)
+
+        # Sanitize title for directory name
+        safe_title = "".join(c for c in base_title if c.isalnum() or c in (' ', '_', '-')).rstrip()
+        safe_title = safe_title.replace(' ', '_').replace('-', '_')
+        if not safe_title:
+            safe_title = "Untitled_Content"
+
+        output_path_candidate = os.path.join(base_output_folder, safe_title)
+        counter = 1
+        while os.path.exists(output_path_candidate):
+            output_path_candidate = os.path.join(base_output_folder, f"{safe_title}_{counter}")
+            counter += 1
+        
+        try:
+            os.makedirs(output_path_candidate)
+            self.output_dir = output_path_candidate
+            self.transcript_file_path = os.path.join(self.output_dir, "transcript.txt")
+            self.cheat_sheet_file_path = os.path.join(self.output_dir, "narrative_cheat_sheet.json")
+            self.alias_map_file_path = os.path.join(self.output_dir, "aliases_map.json")
+            self.raw_llm_log_file_path = os.path.join(self.output_dir, "llm_raw_interactions.txt") # Changed to .txt
+            self.error_warnings_file_path = os.path.join(self.output_dir, "errors_and_warnings.txt") # Changed to .txt
+            self.update_llm_log_tabs({"type": "status", "message": f"Output directory created: {self.output_dir}"})
+        except Exception as e:
+            self.update_llm_log_tabs({"type": "error", "message": f"Failed to create output directory {output_path_candidate}: {e}"})
+            self.output_dir = None # Clear paths if directory creation failed
+
+    def _write_transcript_line(self, text):
+        if not self.transcript_file_path:
+            return
+        try:
+            with open(self.transcript_file_path, 'a', encoding='utf-8') as f:
+                f.write(text + "\n")
+        except Exception as e:
+            self.update_llm_log_tabs({"type": "error", "message": f"Failed to write transcript to file: {e}"})
+
+    def _write_cheat_sheet(self, entities_data):
+        if not self.cheat_sheet_file_path:
+            return
+        try:
+            with open(self.cheat_sheet_file_path, 'w', encoding='utf-8') as f:
+                json.dump(entities_data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            self.update_llm_log_tabs({"type": "error", "message": f"Failed to write cheat sheet to file: {e}"})
+
+    def _write_alias_map(self, alias_map_data):
+        if not self.alias_map_file_path:
+            return
+        try:
+            with open(self.alias_map_file_path, 'w', encoding='utf-8') as f:
+                json.dump(alias_map_data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            self.update_llm_log_tabs({"type": "error", "message": f"Failed to write alias map to file: {e}"})
+
+    def _write_llm_raw_log_line(self, timestamp, log_type, message, data):
+        if not self.raw_llm_log_file_path:
+            return
+        try:
+            with open(self.raw_llm_log_file_path, 'a', encoding='utf-8') as f:
+                f.write(f"{timestamp} [{log_type.upper()}]: {message}\n")
+                if data:
+                    if isinstance(data, dict) or isinstance(data, list):
+                        f.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+                    else:
+                        f.write(str(data) + "\n")
+                f.write("---\n") # Separator for readability
+        except Exception as e:
+            self.update_llm_log_tabs({"type": "error", "message": f"Failed to write raw LLM log to file: {e}"})
+
+    def _write_error_warning_log_line(self, timestamp, log_type, message, data):
+        if not self.error_warnings_file_path:
+            return
+        try:
+            with open(self.error_warnings_file_path, 'a', encoding='utf-8') as f:
+                error_message = f"{timestamp} [{log_type.upper()}]: {message}"
+                if data:
+                    if isinstance(data, dict) or isinstance(data, list):
+                        error_message += f" (Data: {json.dumps(data, ensure_ascii=False)})"
+                    else:
+                        error_message += f" (Data: {str(data)})"
+                f.write(error_message + "\n")
+        except Exception as e:
+            self.update_llm_log_tabs({"type": "error", "message": f"Failed to write error/warning log to file: {e}"})
+
+
     def get_content_title_and_context(self):
-        # Create a QInputDialog instance to set window flags
         dialog = QInputDialog(self)
         dialog.setWindowTitle("Content Title")
         dialog.setLabelText("Please enter the title of the content you are watching:")
         dialog.setTextEchoMode(QLineEdit.Normal)
-        dialog.setTextValue("The Outlast Trials Lore") # Default text
-        
-        # Set the window flag to always stay on top
+        dialog.setTextValue("All Season 1 Lore from The Outlast Trials") 
         dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowStaysOnTopHint)
         
-        # Execute the dialog and get the result
-        ok = dialog.exec_() # Use exec_() for modal dialogs
-        title = dialog.textValue() # Get the entered text
+        ok = dialog.exec_()
+        title = dialog.textValue()
         
         if ok and title:
             self.content_title = title.strip()
             self.analysis_status_label.setText(f"Analyzing: [FULL] {self.content_title}")
+            
+            # Setup output directory immediately after getting title
+            self._setup_output_directory(self.content_title)
+
             if not self.content_title:
                 self.update_llm_log_tabs({"type": "error", "message": "Empty content title provided. LLM will operate without specific external context."})
                 self.llm_thread.set_external_context("No external context provided by user.")
@@ -501,9 +605,13 @@ class NarrativeNavigator(QMainWindow):
 
     def toggle_processing(self):
         if self.toggle_button.text() == "Start Recording":
+            self.update_llm_log_tabs({"type": "debug", "message": "Starting AudioCaptureThread..."})
             self.audio_thread.start()
+            self.update_llm_log_tabs({"type": "debug", "message": "Starting TranscriptionThread..."})
             self.transcription_thread.start()
+            self.update_llm_log_tabs({"type": "debug", "message": "Starting LLMThread..."})
             self.llm_thread.start()
+
             self.toggle_button.setText("Stop Recording")
             self.processing_tag.setVisible(True)
             self.update_llm_log_tabs({"type": "status", "message": "Processing started."})
@@ -514,13 +622,25 @@ class NarrativeNavigator(QMainWindow):
             self.update_llm_log_tabs({"type": "status", "message": "Processing stopped."})
 
     def stop_processing(self):
+        self.update_llm_log_tabs({"type": "debug", "message": "Stopping LLMThread..."})
         self.llm_thread.stop()
+        self.llm_thread.wait(5000)
+        if self.llm_thread.isRunning():
+            self.update_llm_log_tabs({"type": "warning", "message": "LLMThread did not stop gracefully."})
+
+        self.update_llm_log_tabs({"type": "debug", "message": "Stopping TranscriptionThread..."})
         self.transcription_thread.stop()
+        self.transcription_thread.wait(5000)
+        if self.transcription_thread.isRunning():
+            self.update_llm_log_tabs({"type": "warning", "message": "TranscriptionThread did not stop gracefully."})
+
+        self.update_llm_log_tabs({"type": "debug", "message": "Stopping AudioCaptureThread..."})
         self.audio_thread.stop()
-        self.llm_thread.wait()
-        self.transcription_thread.wait()
-        self.audio_thread.wait()
-        self.update_llm_log_tabs({"type": "status", "message": "All processing threads stopped."})
+        self.audio_thread.wait(5000)
+        if self.audio_thread.isRunning():
+            self.update_llm_log_tabs({"type": "warning", "message": "AudioCaptureThread did not stop gracefully."})
+        
+        self.update_llm_log_tabs({"type": "status", "message": "All processing threads requested to stop."})
 
     def handle_transcription(self, text):
         if self.transcript_display:
@@ -532,6 +652,8 @@ class NarrativeNavigator(QMainWindow):
         self.llm_thread.add_transcription(text) 
         self.recent_activity_display.append(f"Transcript: {text[:80].strip()}...")
         self.recent_activity_display.verticalScrollBar().setValue(self.recent_activity_display.verticalScrollBar().maximum())
+        
+        self._write_transcript_line(text)
 
     def update_entity_displays(self, all_entities):
         for e in all_entities:
@@ -551,24 +673,11 @@ class NarrativeNavigator(QMainWindow):
         filtered_for_display_tabs = [e for e in all_entities if e["current_importance_score"] >= display_threshold]
         filtered_for_display_tabs.sort(key=lambda e: (e["type"], -e["current_importance_score"], e["name"].lower()))
 
-        def clear_layout(layout):
-            if layout is None:
-                return
-            while layout.count():
-                item = layout.takeAt(0)
-                widget = item.widget()
-                nested_layout = item.layout()
-                
-                if widget is not None:
-                    widget.setParent(None)
-                    widget.deleteLater()
-                elif nested_layout is not None:
-                    clear_layout(nested_layout)
-                    del item 
-                else: 
-                    del item
+        # Clear and re-populate story elements
+        # Using the robust clear_layout_recursively helper
+        self.clear_layout_recursively(self.story_elements_container_layout)
         
-        clear_layout(self.story_elements_container_layout)
+        # Then add new widgets
         for entity in filtered_for_display_tabs:
             first_mentioned_time_seconds = entity.get("first_mentioned_idx", 0) * TRANSCRIPT_CHUNK_DURATION_SECONDS
             minutes = int(first_mentioned_time_seconds // 60)
@@ -577,9 +686,13 @@ class NarrativeNavigator(QMainWindow):
 
             entity_card = self._create_entity_card(entity, time_str) 
             self.story_elements_container_layout.addWidget(entity_card)
-        self.story_elements_container_layout.addStretch() 
+        self.story_elements_container_layout.addStretch() # Add stretch back after clearing all and re-adding
 
-        clear_layout(self.key_characters_container_layout)
+
+        # Clear and re-populate key characters
+        # Using the robust clear_layout_recursively helper
+        self.clear_layout_recursively(self.key_characters_container_layout)
+
         key_characters = [e for e in filtered_for_display_tabs if e["type"] == "Characters"]
         key_characters.sort(key=lambda e: -e["current_importance_score"]) 
 
@@ -591,7 +704,7 @@ class NarrativeNavigator(QMainWindow):
 
             char_card = self._create_entity_card(char_entity, time_str)
             self.key_characters_container_layout.addWidget(char_card)
-        self.key_characters_container_layout.addStretch() 
+        self.key_characters_container_layout.addStretch() # Add stretch back after clearing all and re-adding
 
         self.cheat_sheet_table.setRowCount(len(all_entities))
         
@@ -621,14 +734,42 @@ class NarrativeNavigator(QMainWindow):
         self.recent_activity_display.append(f"Entities updated: {len(all_entities)} total found, {total_elements_displayed} displayed (>= threshold).")
         self.recent_activity_display.verticalScrollBar().setValue(self.recent_activity_display.verticalScrollBar().maximum())
 
+        # Real-time saving to files
+        self._write_cheat_sheet(all_entities)
+        self._write_alias_map(self.llm_thread.get_alias_map())
+
+    def clear_layout_recursively(self, layout):
+        if layout is None:
+            return
+        # Iterate in reverse to safely remove items
+        # Taking items from index 0 repeatedly can be inefficient; iterating in reverse is better.
+        for i in reversed(range(layout.count())):
+            item = layout.takeAt(i)
+            
+            # Store the widget reference once to avoid re-evaluation
+            widget = item.widget() 
+
+            if widget is not None:
+                # If the item is a widget, remove it from the layout and delete it
+                widget.setParent(None) # Operate on the stored 'widget' variable
+                widget.deleteLater()   # Operate on the stored 'widget' variable
+            elif item.layout() is not None:
+                # If the item is a nested layout, clear it recursively
+                self.clear_layout_recursively(item.layout())
+            else:
+                # Handle spacer items or other types without widget/layout
+                # This correctly cleans up QSpacerItem objects.
+                del item
+
+
     def update_llm_log_tabs(self, log_data):
         timestamp = datetime.now().strftime("[%H:%M:%S]")
         log_type = log_data.get("type", "unknown")
         message = log_data.get("message", "No message provided")
         data = log_data.get("data")
 
+        # Update UI display in LLM Log tab
         formatted_message = f"<p style='margin-bottom: 5px;'>{timestamp} <b>[{log_type.upper()}]</b>: {message}</p>"
-        
         if log_type == "prompt":
             formatted_message += f"<pre style='background-color: #e6e6fa; padding: 10px; border-radius: 5px;'><code>{json.dumps(data, indent=2)}</code></pre>"
         elif log_type == "raw_response":
@@ -666,12 +807,11 @@ class NarrativeNavigator(QMainWindow):
                 self.llm_parsed_entities_table.setItem(i, 3, QTableWidgetItem(str(entity.get("base_importance_score", ""))))
             self.llm_parsed_entities_table.resizeColumnsToContents() 
 
-        elif log_type in ["error", "warning", "chat_error"]:
-            error_message = f"{timestamp} [{log_type.upper()}]: {message}"
-            if "entity_data" in log_data and log_data["entity_data"]:
-                error_message += f" (Entity: {json.dumps(log_data['entity_data'])})"
-            self.llm_error_warnings_display.append(error_message)
-            self.llm_error_warnings_display.verticalScrollBar().setValue(self.llm_error_warnings_display.verticalScrollBar().maximum())
+        # Write to dedicated log files
+        if log_type in ["prompt", "raw_response", "parsed_entities", "chat_prompt", "chat_response", "debug", "status"]:
+            self._write_llm_raw_log_line(timestamp, log_type, message, data)
+        elif log_type in ["error", "warning"]:
+            self._write_error_warning_log_line(timestamp, log_type, message, data)
         
     def send_chat_query(self):
         query = self.chat_input.text().strip()
@@ -688,14 +828,27 @@ class NarrativeNavigator(QMainWindow):
 
     def closeEvent(self, event):
         try:
-            self.stop_processing()
-            if self.chat_thread:
+            self.update_llm_log_tabs({"type": "status", "message": "Application closing. Initiating graceful shutdown of threads."})
+            self.stop_processing() # Ensure core processing threads are stopped
+
+            if self.chat_thread and self.chat_thread.isRunning():
+                self.update_llm_log_tabs({"type": "debug", "message": "Stopping ChatThread..."})
                 self.chat_thread.stop()
-                self.chat_thread.wait()
+                self.chat_thread.wait(5000)
+                if self.chat_thread.isRunning():
+                    self.update_llm_log_tabs({"type": "warning", "message": "ChatThread did not stop gracefully."})
+
             if self.web_search_thread and self.web_search_thread.isRunning():
-                self.web_search_thread.quit()
-                self.web_search_thread.wait()
+                self.update_llm_log_tabs({"type": "debug", "message": "Stopping WebSearchThread..."})
+                self.web_search_thread.quit() 
+                self.web_search_thread.wait(5000)
+                if self.web_search_thread.isRunning():
+                    self.update_llm_log_tabs({"type": "warning", "message": "WebSearchThread did not stop gracefully."})
+
+            self.update_llm_log_tabs({"type": "status", "message": "All threads stopped. Application exiting."})
             event.accept()
         except Exception as e:
-            print(f"Error during cleanup: {e}", file=sys.stderr)
+            error_msg = f"Error during cleanup: {e}"
+            self.update_llm_log_tabs({"type": "error", "message": error_msg})
+            print(error_msg, file=sys.stderr)
             event.accept()

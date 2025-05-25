@@ -1,0 +1,11 @@
+[
+  {
+    "base_importance_score": 4,
+    "description": "A concept that is mentioned as a comparison to the Easterman's actions.",
+    "first_mentioned_idx": 0,
+    "mention_count": 1,
+    "name": "Voodoo",
+    "type": "Concepts/Events",
+    "current_importance_score": 5
+  }
+]

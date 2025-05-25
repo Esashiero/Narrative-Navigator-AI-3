@@ -1,0 +1,38 @@
+[
+  {
+    "base_importance_score": 6,
+    "description": "A character in the story",
+    "first_mentioned_idx": 0,
+    "mention_count": 1,
+    "name": "Eastern",
+    "type": "Characters",
+    "current_importance_score": 7
+  },
+  {
+    "base_importance_score": 5,
+    "description": "A character in the story",
+    "first_mentioned_idx": 0,
+    "mention_count": 1,
+    "name": "Aviano",
+    "type": "Characters",
+    "current_importance_score": 6
+  },
+  {
+    "base_importance_score": 4,
+    "description": "A character in the story",
+    "first_mentioned_idx": 0,
+    "mention_count": 1,
+    "name": "Olivier Barranche",
+    "type": "Characters",
+    "current_importance_score": 5
+  },
+  {
+    "base_importance_score": 7,
+    "description": "A project mentioned in the story",
+    "first_mentioned_idx": 0,
+    "mention_count": 1,
+    "name": "Project Lath",
+    "type": "Key Objects",
+    "current_importance_score": 8
+  }
+]

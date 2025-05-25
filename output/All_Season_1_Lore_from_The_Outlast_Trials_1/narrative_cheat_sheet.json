@@ -1,0 +1,38 @@
+[
+  {
+    "base_importance_score": 6,
+    "description": "Research facility",
+    "first_mentioned_idx": 0,
+    "mention_count": 1,
+    "name": "Los Alamos",
+    "type": "Locations",
+    "current_importance_score": 7
+  },
+  {
+    "base_importance_score": 5,
+    "description": "Places of imprisonment and experimentation",
+    "first_mentioned_idx": 0,
+    "mention_count": 1,
+    "name": "German concentration camps",
+    "type": "Locations",
+    "current_importance_score": 6
+  },
+  {
+    "base_importance_score": 5,
+    "description": "Alias for Rudolf Gustav Wernicke",
+    "first_mentioned_idx": 0,
+    "mention_count": 0,
+    "name": "Wernick",
+    "type": "Characters",
+    "current_importance_score": 5
+  },
+  {
+    "base_importance_score": 5,
+    "description": "Alias for Rudolf Gustav Wernicke",
+    "first_mentioned_idx": 0,
+    "mention_count": 1,
+    "name": "Wernicke",
+    "type": "Characters",
+    "current_importance_score": 6
+  }
+]

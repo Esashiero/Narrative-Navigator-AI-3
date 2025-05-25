@@ -1,0 +1,263 @@
+[
+  {
+    "base_importance_score": 6,
+    "description": "A crucial item in the narrative",
+    "first_mentioned_idx": 0,
+    "mention_count": 1,
+    "name": "air conditioner",
+    "type": "Key Objects",
+    "current_importance_score": 7
+  },
+  {
+    "base_importance_score": 4,
+    "description": "A setting in the narrative",
+    "first_mentioned_idx": 0,
+    "mention_count": 1,
+    "name": "restaurant",
+    "type": "Locations",
+    "current_importance_score": 5
+  },
+  {
+    "base_importance_score": 8,
+    "description": "A character in the narrative",
+    "first_mentioned_idx": 0,
+    "mention_count": 0,
+    "name": "Hendrick Joliet Easterman",
+    "type": "Characters",
+    "current_importance_score": 8
+  },
+  {
+    "base_importance_score": 8,
+    "description": "A character in the narrative",
+    "first_mentioned_idx": 0,
+    "mention_count": 0,
+    "name": "Rudolf Gustav Wernicke",
+    "type": "Characters",
+    "current_importance_score": 8
+  },
+  {
+    "base_importance_score": 7,
+    "description": "A historical organization",
+    "first_mentioned_idx": 0,
+    "mention_count": 0,
+    "name": "OSS",
+    "type": "Organizations",
+    "current_importance_score": 7
+  },
+  {
+    "base_importance_score": 9,
+    "description": "A historical event",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Operation Paperclip",
+    "type": "Concepts/Events",
+    "current_importance_score": 9
+  },
+  {
+    "base_importance_score": 9,
+    "description": "A historical event",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Cold War",
+    "type": "Concepts/Events",
+    "current_importance_score": 9
+  },
+  {
+    "base_importance_score": 8,
+    "description": "An alias for Rudolf Gustav Wernicke",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Wernick",
+    "type": "Characters",
+    "current_importance_score": 8
+  },
+  {
+    "base_importance_score": 8,
+    "description": "An alias for Hendrick Joliet Easterman",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Eastman",
+    "type": "Characters",
+    "current_importance_score": 8
+  },
+  {
+    "base_importance_score": 5,
+    "description": "A country/region",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "US",
+    "type": "Locations",
+    "current_importance_score": 5
+  },
+  {
+    "base_importance_score": 6,
+    "description": "A city",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Nagasaki",
+    "type": "Locations",
+    "current_importance_score": 6
+  },
+  {
+    "base_importance_score": 6,
+    "description": "A city",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Hiroshima",
+    "type": "Locations",
+    "current_importance_score": 6
+  },
+  {
+    "base_importance_score": 5,
+    "description": "A country",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Poland",
+    "type": "Locations",
+    "current_importance_score": 5
+  },
+  {
+    "base_importance_score": 5,
+    "description": "A country",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Germany",
+    "type": "Locations",
+    "current_importance_score": 5
+  },
+  {
+    "base_importance_score": 5,
+    "description": "A country",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Italy",
+    "type": "Locations",
+    "current_importance_score": 5
+  },
+  {
+    "base_importance_score": 5,
+    "description": "A country",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Japan",
+    "type": "Locations",
+    "current_importance_score": 5
+  },
+  {
+    "base_importance_score": 5,
+    "description": "A country",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "United States",
+    "type": "Locations",
+    "current_importance_score": 5
+  },
+  {
+    "base_importance_score": 7,
+    "description": "A historical country",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Soviet Union",
+    "type": "Locations",
+    "current_importance_score": 7
+  },
+  {
+    "base_importance_score": 6,
+    "description": "A location",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Los Alamos",
+    "type": "Locations",
+    "current_importance_score": 6
+  },
+  {
+    "base_importance_score": 5,
+    "description": "A location",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Hong Kong",
+    "type": "Locations",
+    "current_importance_score": 5
+  },
+  {
+    "base_importance_score": 5,
+    "description": "A location",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Eniwetok Atoll",
+    "type": "Locations",
+    "current_importance_score": 5
+  },
+  {
+    "base_importance_score": 4,
+    "description": "A city",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Chicago",
+    "type": "Locations",
+    "current_importance_score": 4
+  },
+  {
+    "base_importance_score": 5,
+    "description": "A location",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Mount Massive Asylum",
+    "type": "Locations",
+    "current_importance_score": 5
+  },
+  {
+    "base_importance_score": 7,
+    "description": "A historical organization",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Axis powers",
+    "type": "Organizations",
+    "current_importance_score": 7
+  },
+  {
+    "base_importance_score": 5,
+    "description": "A historical organization",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Korean people army",
+    "type": "Organizations",
+    "current_importance_score": 5
+  },
+  {
+    "base_importance_score": 3,
+    "description": "A substance",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "LSD",
+    "type": "Key Objects",
+    "current_importance_score": 3
+  },
+  {
+    "base_importance_score": 3,
+    "description": "A vehicle",
+    "first_mentioned_idx": 1,
+    "mention_count": 0,
+    "name": "Walrider",
+    "type": "Key Objects",
+    "current_importance_score": 3
+  },
+  {
+    "base_importance_score": 1,
+    "description": "An expression",
+    "first_mentioned_idx": 1,
+    "mention_count": 1,
+    "name": "Fucking shit",
+    "type": "Concepts/Events",
+    "current_importance_score": 2
+  },
+  {
+    "base_importance_score": 5,
+    "description": "A character in the narrative",
+    "first_mentioned_idx": 4,
+    "mention_count": 1,
+    "name": "Mater D",
+    "type": "Characters",
+    "current_importance_score": 6
+  }
+]

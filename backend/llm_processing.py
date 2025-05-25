@@ -3,6 +3,7 @@ import re
 import threading
 import time
 import ollama
+import Levenshtein # Used for robust string similarity comparison
 from PyQt5.QtCore import QThread, pyqtSignal
 from constants import TRANSCRIPT_CHUNK_DURATION_SECONDS
 from llm_prompts import base_system_prompt
@@ -29,6 +30,13 @@ entity_list_schema = {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 10
+                    },
+                    "aliases": { # NEW: Optional list of aliases
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "default": []
                     }
                 },
                 "required": [
@@ -53,28 +61,27 @@ class LLMThread(QThread):
         super().__init__()
         try:
             self.model = "llama3.2:latest"
+            # Attempt a simple chat to ensure Ollama is running and model exists
             ollama.chat(model=self.model, messages=[{"role": "user", "content": "hi"}], stream=False)
+            self.llm_log.emit({"type": "status", "message": f"Successfully connected to Ollama model '{self.model}'."})
         except Exception as e:
             self.llm_log.emit({"type": "error", "message": f"Failed to connect to Ollama or model '{self.model}' not found: {e}"})
             self.model = None
 
         self.transcriptions = []
-        self.entities = [] 
+        self.entities = [] # This will hold the canonical entities (with combined info)
+        self.dynamic_alias_map = {} # Maps alias (normalized string) -> canonical name (actual string from entities list)
         self.running = False
         self.external_context = ""
         self.content_title = "Unknown Content"
 
         self.base_system_prompt_template = base_system_prompt
-        # Debug prints to inspect template and formatted string
-        print(f"DEBUG: Initializing LLMThread")
-        print(f"DEBUG: base_system_prompt_template (first 500 chars):\n{self.base_system_prompt_template[:500]}...")
-        print(f"DEBUG: Keys provided for initial format: content_title='{self.content_title}', external_context='No external context loaded yet...'")
-        # Format the system prompt with only the expected keys
+        
+        # Initial formatting of the system prompt
         self.system_prompt = self.base_system_prompt_template.format(
             content_title=self.content_title,
             external_context="No external context loaded yet. Please wait for the application to gather information."
         )
-        print(f"DEBUG: Formatted self.system_prompt (first 500 chars):\n{self.system_prompt[:500]}...")
         self.last_transcript_processed_idx = -1
         
         self.VALID_ENTITY_TYPES = ["Characters", "Locations", "Organizations", "Key Objects", "Concepts/Events"]
@@ -88,15 +95,10 @@ class LLMThread(QThread):
         self._update_system_prompt()
 
     def _update_system_prompt(self):
-        # Debug prints to inspect template and formatted string
-        print(f"DEBUG: Updating system prompt")
-        print(f"DEBUG: base_system_prompt_template (first 500 chars):\n{self.base_system_prompt_template[:500]}...")
-        print(f"DEBUG: Keys provided for update format: content_title='{self.content_title}', external_context='{self.external_context[:50]}...'")
         self.system_prompt = self.base_system_prompt_template.format(
             content_title=self.content_title,
             external_context=self.external_context
         )
-        print(f"DEBUG: Formatted self.system_prompt (first 500 chars):\n{self.system_prompt[:500]}...")
     
     def _normalize_entity_type(self, type_str):
         """Normalizes LLM output type strings to our canonical types."""
@@ -108,18 +110,12 @@ class LLMThread(QThread):
         if ',' in type_str_lower:
             type_str_lower = type_str_lower.split(',')[0].strip()
         
-        # Explicitly handle combined types or singular/plural mismatches from LLM
         if type_str_lower == "concept/event":
             return "Concepts/Events"
         if type_str_lower == "locations/organizations":
-            # Heuristic: if a place name, it's probably a location first.
-            # We'll normalize name separately, and use the normalized name to guide this
-            # For "USA" or "United States" cases, "Locations" is more appropriate.
-            return "Locations" # Default to Locations for this combo
-        
-        # Handle new combined type seen in logs
+            return "Locations" 
         if type_str_lower == "locations/concepts/events":
-            return "Locations" # Defaulting based on observed example ('Marines')
+            return "Locations" 
         
         if type_str_lower in ["characters", "characters/individuals", "character", "individual"]:
             return "Characters"
@@ -133,131 +129,76 @@ class LLMThread(QThread):
             return "Concepts/Events"
         return None
 
-    def _normalize_for_comparison(self, name):
+    def _normalize_for_comparison(self, name, entity_type=None):
         """
         Normalizes entity names for robust comparison and deduplication.
-        Includes a very comprehensive mapping for common synonyms, acronyms, and known typos/variations.
-        The goal is to map various inputs to a single, canonical string.
+        It uses a dynamic alias map, then string similarity, and finally a fallback cleaning.
+        `entity_type` (canonical type) is crucial for disambiguation.
+        Returns the canonical name (actual string) or a cleaned string if no match found.
         """
-        name_lower = name.lower().strip()
+        if not name:
+            return ""
 
-        # Comprehensive canonical mapping
-        canonical_map = {
-            # Characters
-            "easterman": "hendrick joliet easterman",
-            "eastman": "hendrick joliet easterman",
-            "hendrick joliet easterman": "hendrick joliet easterman",
-            "wernick": "rudolf gustav wernicke",
-            "wernicke": "rudolf gustav wernicke",
-            "rudolf gustav wernicke": "rudolf gustav wernicke",
-            "jameson lawler": "jameson lawler",
-            "jameson lawler (cia agent)": "jameson lawler",
-            "abe bradley aviano": "abe bradley aviano",
-            "abe bradley aviano's": "abe bradley aviano", # Possessive
-            "stalin": "joseph stalin",
-            "joseph stalin": "joseph stalin",
-            "truman": "harry s truman",
-            "harry s truman": "harry s truman",
-            "billy": "billy", # The Outlast character
-            "miles": "miles", # The Outlast character
-            "hope": "hope", # The Outlast character
-            "mother gooseberry": "mother gooseberry",
+        # Step 1: Basic cleaning for lookup in alias map and similarity comparison
+        # Remove parenthesized content for a cleaner base name
+        cleaned_base_name = re.sub(r'\s*\([^)]*\)', '', name).strip()
+        name_lower_stripped = re.sub(r'[^a-z0-9\s]', '', cleaned_base_name.lower()).strip()
+        name_lower_stripped = re.sub(r'\s+', ' ', name_lower_stripped).strip()
 
-            # Locations
-            "us": "united states",
-            "usa": "united states",
-            "united states": "united states",
-            "united states (usa)": "united states",
-            "united states of america": "united states",
-            "the usa": "united states",
-            "e usa (united states)": "united states", # From screenshot
-            "los alamos": "los alamos",
-            "los alamos national laboratory": "los alamos",
-            "hong kong": "hong kong",
-            "hiroshima": "hiroshima",
-            "nagasaki": "nagasaki",
-            "poland": "poland",
-            "germany": "germany",
-            "italy": "italy",
-            "japan": "japan",
-            "soviet union": "union of soviet socialist republics", # Map to full name
-            "chicago": "chicago",
-            "eniwetok atoll": "eniwetok atoll",
-            "enno atoq atoll": "eniwetok atoll", # Typo from transcript
-            "mount massive asylum": "mount massive asylum",
+        # Step 2: Check dynamic alias map for direct lookup
+        if name_lower_stripped in self.dynamic_alias_map:
+            # We found a canonical name, return it
+            canonical_name = self.dynamic_alias_map[name_lower_stripped]
+            self.llm_log.emit({"type": "debug", "message": f"Alias map hit: '{name}' (cleaned: '{name_lower_stripped}') mapped to '{canonical_name}'."})
+            return canonical_name
 
-            # Organizations
-            "ussr": "union of soviet socialist republics",
-            "union of soviet socialist republics": "union of soviet socialist republics",
-            "oss": "office of strategic services",
-            "office of strategic services": "office of strategic services",
-            "cia": "central intelligence agency",
-            "central intelligence agency": "central intelligence agency",
-            "nazi germany": "nazi germany",
-            "kingdom of italy": "kingdom of italy",
-            "empire of japan": "empire of japan",
-            "murkoff corporation": "murkoff corporation",
-            "murkov corporation": "murkoff corporation", # Typo from transcript
-            "red barrels": "red barrels", # Game developer
-            "axis powers": "axis powers",
-            "korean people's army": "korean people's army",
+        # Step 3: If not in alias map, try to find a similar existing canonical entity
+        # This acts as a fallback for aliases LLM might miss, or minor transcription errors.
+        best_match_canonical_name = None
+        highest_similarity = 0.88 # Threshold for considering a strong match (0.0 to 1.0)
 
-            # Key Objects
-            "atomic bomb": "atomic bomb",
-            "hydrogen bomb": "hydrogen bomb",
-            "walrider": "walrider",
-            "lsd": "lsd",
+        for existing_entity in self.entities:
+            # Ensure entity type is comparable or ignored if not provided
+            if entity_type is not None and self._normalize_entity_type(existing_entity["type"]) != self._normalize_entity_type(entity_type):
+                continue # Skip if types are known and don't match
 
-            # Concepts/Events
-            "cold war": "cold war era",
-            "cold war era": "cold war era",
-            "1939": "1939",
-            "1945": "1945",
-            "1947": "1947",
-            "1949": "1949",
-            "1951": "1951",
-            "1953": "1953",
-            "world war ii": "world war ii",
-            "second world war": "world war ii",
-            "nuclear age": "nuclear age",
-            "arms race": "arms race",
-            "operation paperclip": "operation paperclip",
-            "project bluebird": "project bluebird",
-            "project artichoke": "project artichoke",
-            "project bluebird, project artichoke (cia projects)": "project bluebird", # Pick one as primary, description can be combined later
-            "project bluebird, project artichoke": "project bluebird",
-            "space race": "space race",
-            "the outlast trials": "the outlast trials", # Canonical game title
-            "the outlast trials video games": "the outlast trials",
-            "outlast trials game": "the outlast trials",
-            "season 1 of the outlast trials": "season 1 of the outlast trials", # Canonical season name
-            "season 1 of the trials": "season 1 of the outlast trials", # Shorter form
-            "season 2 of the outlast series": "season 2 of the outlast series", # Canonical season name
-            "season 2 of the outlast": "season 2 of the outlast series", # Shorter form
-            "season 2": "season 2 of the outlast series", # Maps to full season
-            "korean war": "korean war",
-        }
+            existing_canonical_name_cleaned = re.sub(r'[^a-z0-9\s]', '', existing_entity["name"].lower()).strip()
+            existing_canonical_name_cleaned = re.sub(r'\s+', ' ', existing_canonical_name_cleaned).strip()
+            
+            # Use Levenshtein distance ratio for similarity
+            similarity = Levenshtein.ratio(name_lower_stripped, existing_canonical_name_cleaned)
+            
+            if similarity > highest_similarity:
+                highest_similarity = similarity
+                best_match_canonical_name = existing_entity["name"] # Keep the actual canonical name from our entity list
+
+        if best_match_canonical_name:
+            # If a strong similarity match is found, add the current name as an alias
+            # to the best_match_canonical_name for future faster lookups.
+            self.dynamic_alias_map[name_lower_stripped] = best_match_canonical_name
+            self.llm_log.emit({"type": "debug", "message": f"Similarity match: '{name}' (cleaned: '{name_lower_stripped}') strongly similar to '{best_match_canonical_name}' (similarity: {highest_similarity:.2f}). Added to alias map."})
+            return best_match_canonical_name
         
-        # Check for direct map first
-        if name_lower in canonical_map:
-            return canonical_map[name_lower]
+        # Step 4: No direct alias or strong similarity match found.
+        # This is a new potential canonical entity name. Apply more aggressive cleaning.
+        # This cleaning is done *after* alias/similarity check to preserve LLM's raw name if it's the canonical one.
+        final_canonical_candidate = cleaned_base_name # Start with the name without parenthesized text
 
-        # Attempt to clean further if not directly mapped.
-        # This is a fallback and less reliable than explicit mappings.
-        cleaned_name = re.sub(r'\s*\([^)]*\)', '', name_lower).strip() # remove parenthesized text (e.g., "(US)")
+        # Remove common articles and possessive endings for robust canonicalization
         for article in ['the ', 'a ', 'an ']:
-            if cleaned_name.startswith(article):
-                cleaned_name = cleaned_name[len(article):].strip()
-        cleaned_name = re.sub(r"'s\b", '', cleaned_name).strip() # remove 's at end of word
-        cleaned_name = re.sub(r"s'\b", 's', cleaned_name).strip() # remove s' at end of word
-        cleaned_name = re.sub(r'[^a-z0-9\s]', '', cleaned_name).strip() # remove non-alphanumeric (keep spaces)
-        cleaned_name = re.sub(r'\s+', ' ', cleaned_name).strip() # reduce multiple spaces
+            if final_canonical_candidate.lower().startswith(article):
+                final_canonical_candidate = final_canonical_candidate[len(article):].strip()
+        final_canonical_candidate = re.sub(r"'s?\b", '', final_canonical_candidate, flags=re.IGNORECASE).strip() # remove 's or s' at end of word
+        final_canonical_candidate = re.sub(r'[^a-zA-Z0-9\s]', '', final_canonical_candidate).strip() # remove non-alphanumeric (keep spaces)
+        final_canonical_candidate = re.sub(r'\s+', ' ', final_canonical_candidate).strip() # reduce multiple spaces
 
-        # After cleaning, check if it now matches a canonical form
-        if cleaned_name in canonical_map:
-            return canonical_map[cleaned_name]
-
-        return cleaned_name # Return cleaned name if no canonical mapping is found
+        if not final_canonical_candidate: # If cleaning resulted in empty string, use original
+            final_canonical_candidate = name.strip()
+            
+        # Add this new canonical candidate to the alias map, pointing to itself
+        self.dynamic_alias_map[final_canonical_candidate.lower()] = final_canonical_candidate
+        self.llm_log.emit({"type": "debug", "message": f"New canonical candidate: '{name}' mapped to cleaned '{final_canonical_candidate}'. Added to alias map."})
+        return final_canonical_candidate
 
     def _normalize_for_mention_check(self, text):
         """
@@ -270,39 +211,28 @@ class LLMThread(QThread):
         text = re.sub(r'\s+', ' ', text).strip() # Reduce multiple spaces to single space
         return text
 
-    def _is_similar_entity(self, entity1, entity2):
-        """
-        Compares two entity dicts for similarity based on normalized name and canonical type.
-        This function is crucial for internal deduplication.
-        """
-        type1 = self._normalize_entity_type(entity1.get("type", ""))
-        type2 = entity2.get("type", "") 
-        
-        if type1 != type2 or type1 is None:
-            return False
-            
-        name1_norm = self._normalize_for_comparison(entity1["name"])
-        name2_norm = self._normalize_for_comparison(entity2["name"])
-        return name1_norm == name2_norm
+    # _is_similar_entity is removed as its logic is now primarily handled by _normalize_for_comparison
+    # during entity reconciliation for deduplication.
 
     def _update_importance_from_transcript(self, transcript_text):
         """
         Increments mention_count for existing entities found in the new transcript.
         Uses canonical names for matching to handle variations/typos.
         """
-        normalized_transcript = self._normalize_for_mention_check(transcript_text)
+        normalized_transcript_for_check = self._normalize_for_mention_check(transcript_text)
         
         for entity in self.entities:
             # Get the canonical name of the *existing* entity for matching
-            entity_canonical_name = self._normalize_for_comparison(entity["name"]) 
+            # Ensure it's in the form used for mention checking.
+            entity_canonical_name_for_check = self._normalize_for_mention_check(entity["name"]) 
             
             # Prepare a regex pattern for the canonical name, ensuring whole word match
             # re.escape is important if entity name contains special regex characters
-            pattern = r'\b' + re.escape(entity_canonical_name) + r'\b'
+            pattern = r'\b' + re.escape(entity_canonical_name_for_check) + r'\b'
             
-            if re.search(pattern, normalized_transcript):
+            if re.search(pattern, normalized_transcript_for_check):
                 entity["mention_count"] += 1
-                self.llm_log.emit({"type": "debug", "message": f"Entity '{entity['name']}' (canonical: '{entity_canonical_name}') ({entity['type']}) mention_count incremented to {entity['mention_count']}"})
+                self.llm_log.emit({"type": "debug", "message": f"Entity '{entity['name']}' (canonical: '{entity_canonical_name_for_check}') ({entity['type']}) mention_count incremented to {entity['mention_count']}"})
 
     def run(self):
         self.running = True
@@ -321,11 +251,9 @@ class LLMThread(QThread):
         self.llm_log.emit({"type": "status", "message": "LLM Thread started with external context."})
         while self.running:
             if len(self.transcriptions) > self.last_transcript_processed_idx + 1:
-                transcript_to_process = self.transcriptions[self.last_transcript_processed_idx + 1] # Process the next unprocessed transcript
+                transcript_to_process = self.transcriptions[self.last_transcript_processed_idx + 1] 
                 current_transcript_idx = self.last_transcript_processed_idx + 1 
                 
-                # Take recent transcripts for better context for LLM
-                # Use a sliding window of the last 5 transcripts (including current)
                 recent_transcripts = self.transcriptions[max(0, current_transcript_idx - 4):current_transcript_idx + 1]
                 
                 current_entities_for_llm_prompt = [
@@ -333,13 +261,18 @@ class LLMThread(QThread):
                     for e in self.entities
                 ]
 
+                # Combine current and recent transcripts for a robust mention check later
+                all_relevant_transcript_text = "\n".join(recent_transcripts)
+                normalized_all_relevant_transcript_text = self._normalize_for_mention_check(all_relevant_transcript_text)
+
+
                 messages = [
                     {"role": "system", "content": self.system_prompt},
                     {"role": "user", "content":
                      f"Current transcript snippet: {transcript_to_process}\n"
                      f"Recent context (last {len(recent_transcripts)} snippets): {recent_transcripts}\n"
                      f"Current narrative cheat sheet: {json.dumps(current_entities_for_llm_prompt, indent=2)}\n"
-                     f"Based on ALL information (current transcript, recent context, full cheat sheet), identify *all identifiable* entities. For EVERY entity you return (new or existing), provide its 'base_importance_score' (1-10) re-evaluated based on its inherent narrative relevance. Remember to include historical dates/years and specific organizations like OSS if mentioned. Ensure to correctly categorize and canonicalize names like 'Easterman'/'Eastman' to 'Hendrick Joliet Easterman', 'Wernick'/'Wernicke' to 'Rudolf Gustav Wernicke', and 'Operation Paperclip'."}
+                     f"Based on ALL information (current transcript, recent context, full cheat sheet), identify *all identifiable* entities. For EVERY entity you return (new or existing), provide its 'base_importance_score' (1-10) re-evaluated based on its inherent narrative relevance. Also, include an 'aliases' array for any recognized alternative names, nicknames, or common variations. Remember to include historical dates/years and specific organizations if mentioned. Ensure to correctly categorize and canonicalize names."}
                 ]
                 self.llm_log.emit({"type": "prompt", "message": f"Prompt for transcript index {current_transcript_idx}", "data": messages})
                 
@@ -350,14 +283,13 @@ class LLMThread(QThread):
                         model=self.model,
                         messages=messages,
                         stream=False,
-                        # Use the new format parameter to enforce JSON schema
-                        format=entity_list_schema, # Pass the schema dictionary here
+                        format=entity_list_schema, 
                         options={
-                            "temperature": 0.1, # Keep low for deterministic output
-                            "top_p": 0.9,       # Keep relatively high
-                            "top_k": 40,        # Default is fine
-                            "repeat_penalty": 1.0 # Avoid penalizing repeated keys
-                        } # Keep these options for output quality
+                            "temperature": 0.1, 
+                            "top_p": 0.9,       
+                            "top_k": 40,        
+                            "repeat_penalty": 1.0 
+                        }
                     )
                     raw_content_from_llm = response['message']['content']
                     self.llm_log.emit({"type": "raw_response", "message": f"Raw LLM response for transcript index {current_transcript_idx}", "data": raw_content_from_llm})
@@ -367,47 +299,30 @@ class LLMThread(QThread):
                     json_string_to_parse = ""
 
                     try:
-                        # Attempt 1: Try to parse directly (most common good case)
-                        try:
-                            json_string_to_parse = raw_content_from_llm.strip()
+                        json_string_to_parse = raw_content_from_llm.strip()
+                        parsed_llm_output = json.loads(json_string_to_parse)
+                    except json.JSONDecodeError:
+                        json_match = re.search(r"```json\s*(.*?)\s*```", raw_content_from_llm, re.DOTALL)
+                        if json_match:
+                            json_string_to_parse = json_match.group(1).strip()
                             parsed_llm_output = json.loads(json_string_to_parse)
-                        except json.JSONDecodeError:
-                            # Attempt 2: Search for a JSON block (e.g., if wrapped in markdown)
-                            json_match = re.search(r"```json\s*(.*?)\s*```", raw_content_from_llm, re.DOTALL)
-                            if json_match:
-                                json_string_to_parse = json_match.group(1).strip()
+                        else:
+                            json_match_loose = re.search(r"\{.*\}", raw_content_from_llm, re.DOTALL)
+                            if json_match_loose:
+                                json_string_to_parse = json_match_loose.group(0).strip()
                                 parsed_llm_output = json.loads(json_string_to_parse)
                             else:
-                                # Attempt 3: Search for the first valid JSON object (from first { to last })
-                                json_match_loose = re.search(r"\{.*\}", raw_content_from_llm, re.DOTALL)
-                                if json_match_loose:
-                                    json_string_to_parse = json_match_loose.group(0).strip()
+                                json_match_array_loose = re.search(r"\[.*\]", raw_content_from_llm, re.DOTALL)
+                                if json_match_array_loose:
+                                    json_string_to_parse = json_match_array_loose.group(0).strip()
                                     parsed_llm_output = json.loads(json_string_to_parse)
                                 else:
-                                    # Attempt 4: Search for the first valid JSON array (from first [ to last ])
-                                    json_match_array_loose = re.search(r"\[.*\]", raw_content_from_llm, re.DOTALL)
-                                    if json_match_array_loose:
-                                        json_string_to_parse = json_match_array_loose.group(0).strip()
-                                        parsed_llm_output = json.loads(json_string_to_parse)
-                                    else:
-                                        raise json.JSONDecodeError("No recognizable JSON structure found.", raw_content_from_llm, 0)
+                                    raise json.JSONDecodeError("No recognizable JSON structure found.", raw_content_from_llm, 0)
 
-                    except (json.JSONDecodeError, ValueError) as e:
-                        # Handle JSON parsing and structure errors
-                        self.llm_log.emit({"type": "error", "message": f"JSON parsing/structure error: {str(e)}\nAttempted to parse:\n{json_string_to_parse if json_string_to_parse else raw_content_from_llm}", "data": raw_content_from_llm})
-                        # Proceed with an empty entities list to avoid crashing
-                        llm_identified_entities = []
-                    except Exception as e:
-                        # Handle other potential errors during the LLM call or processing
-                        self.llm_log.emit({"type": "error", "message": f"LLM processing failed: {str(e)}"})
-                        llm_identified_entities = [] # Ensure it's always a list
-
-                    # Now process the parsed_llm_output
                     if parsed_llm_output is None:
                         self.llm_log.emit({"type": "warning", "message": f"JSON parsing attempts found no valid structure.\nAttempted to parse:\n{raw_content_from_llm}", "data": raw_content_from_llm})
-                        llm_identified_entities = [] # Ensure empty list if nothing was parsed
+                        llm_identified_entities = [] 
                     elif isinstance(parsed_llm_output, list):
-                        # LLM sometimes returns a list of entities directly instead of {"entities": [...]}
                         llm_identified_entities = parsed_llm_output
                     elif isinstance(parsed_llm_output, dict) and 'entities' in parsed_llm_output:
                         llm_identified_entities = parsed_llm_output.get('entities', [])
@@ -421,52 +336,85 @@ class LLMThread(QThread):
 
                 except (json.JSONDecodeError, ValueError) as e:
                     self.llm_log.emit({"type": "error", "message": f"JSON parsing error: {str(e)}\nAttempted to parse:\n{json_string_to_parse if json_string_to_parse else raw_content_from_llm}", "data": raw_content_from_llm})
-                    # Continue with empty entities list if parsing fails, but log the issue
                     llm_identified_entities = []
                 except Exception as e:
                     self.llm_log.emit({"type": "error", "message": f"LLM request failed: {str(e)}"})
-                    llm_identified_entities = [] # Ensure it's always a list
+                    llm_identified_entities = [] 
 
                 # --- Entity Reconciliation and Update ---
                 temp_entities_dict = {}
                 for e in self.entities:
-                    # Use the canonical name and type as the primary key for existing entities
-                    normalized_name = self._normalize_for_comparison(e["name"])
-                    temp_entities_dict[(normalized_name, e["type"])] = e
+                    # Key by canonical name and canonical type to ensure uniqueness
+                    normalized_name_key = self._normalize_for_comparison(e["name"], e["type"])
+                    canonical_type = self._normalize_entity_type(e["type"]) # Ensure type is canonical too
+                    temp_entities_dict[(normalized_name_key, canonical_type)] = e
 
+                filtered_llm_identified_entities = []
                 for llm_entity_data in llm_identified_entities:
                     name = llm_entity_data.get("name")
                     raw_type = llm_entity_data.get("type")
-                    description = llm_entity_data.get("description")
-                    base_importance_score = llm_entity_data.get("base_importance_score")
+                    
+                    if not name:
+                        self.llm_log.emit({"type": "warning", "message": f"Skipping invalid entity from LLM (missing name).", "entity_data": llm_entity_data})
+                        continue
 
                     canonical_type = self._normalize_entity_type(raw_type)
                     if canonical_type is None:
                         self.llm_log.emit({"type": "warning", "message": f"Skipping entity with unrecognized type '{raw_type}'.", "entity_data": llm_entity_data})
                         continue
-                    type_ = canonical_type
-
-                    if not name:
-                        self.llm_log.emit({"type": "warning", "message": f"Skipping invalid entity from LLM (missing name).", "entity_data": llm_entity_data})
-                        continue
                     
-                    # Ensure base_importance_score is an int within range
+                    # New strict mention filter:
+                    # Check if the LLM-provided name (or its normalized form) is in the transcript text
+                    # We check both the raw name and the more aggressively normalized name
+                    mention_found = False
+                    
+                    # Check raw LLM name directly (case-insensitive, basic cleaning)
+                    # This targets the actual string mentioned by the LLM
+                    normalized_llm_name = self._normalize_for_mention_check(name)
+                    if normalized_llm_name and normalized_llm_name in normalized_all_relevant_transcript_text:
+                        mention_found = True
+                    else:
+                        # Also check any aliases provided by the LLM for mention
+                        for alias in llm_entity_data.get("aliases", []):
+                            normalized_alias = self._normalize_for_mention_check(alias)
+                            if normalized_alias and normalized_alias in normalized_all_relevant_transcript_text:
+                                mention_found = True
+                                break # Found a mention via an alias, no need to check further aliases for THIS entity
+                            
+                    if not mention_found:
+                        self.llm_log.emit({"type": "warning", "message": f"LLM proposed entity '{name}' ({raw_type}) not found explicitly in transcript or its aliases. Skipping.", "entity_data": llm_entity_data})
+                        continue # Skip this entity if not actually mentioned
+                    
+                    filtered_llm_identified_entities.append(llm_entity_data)
+
+                # Process only the entities that were actually mentioned in the transcript
+                for llm_entity_data in filtered_llm_identified_entities:
+                    name = llm_entity_data.get("name")
+                    raw_type = llm_entity_data.get("type")
+                    description = llm_entity_data.get("description")
+                    base_importance_score = llm_entity_data.get("base_importance_score")
+                    aliases = llm_entity_data.get("aliases", []) 
+
+                    canonical_type = self._normalize_entity_type(raw_type) # Already checked above, but keep for clarity
+                    
                     if not isinstance(base_importance_score, int) or not (1 <= base_importance_score <= 10):
                         self.llm_log.emit({"type": "warning", "message": f"Invalid base_importance_score for '{name}'. Defaulting to 1.", "entity_data": llm_entity_data})
                         base_importance_score = 1
 
-                    # Use the normalized LLM-provided name and canonical type as the key for lookup
-                    normalized_key_for_llm_entity = (self._normalize_for_comparison(name), type_)
-                    existing_entity = temp_entities_dict.get(normalized_key_for_llm_entity)
+                    # Get the canonical name for the LLM-provided name
+                    # IMPORTANT: Use the _normalize_for_comparison method here for the LLM's primary name
+                    llm_provided_canonical_name = self._normalize_for_comparison(name, canonical_type)
+                    
+                    # Use this canonical name and type as the key for lookup in our temp dict
+                    entity_key = (llm_provided_canonical_name, canonical_type)
+                    existing_entity = temp_entities_dict.get(entity_key)
 
                     if existing_entity:
                         # Update existing entity
-                        existing_entity["description"] = description if description else existing_entity["description"]
-                        
                         # Prioritize update if new name is more complete or has better casing
-                        # Only update if the normalized names are the same (already guaranteed by normalized_key)
-                        current_normalized_name = self._normalize_for_comparison(existing_entity["name"])
-                        new_normalized_name = self._normalize_for_comparison(name)
+                        # Only update if the normalized names are the same (already guaranteed by entity_key)
+                        current_normalized_name = self._normalize_for_comparison(existing_entity["name"], existing_entity["type"])
+                        new_normalized_name = self._normalize_for_comparison(name, canonical_type)
 
                         if current_normalized_name == new_normalized_name:
                             # Heuristic: Prefer longer name (more complete) or better casing
@@ -474,33 +422,57 @@ class LLMThread(QThread):
                                (name and name[0].isupper() and not (existing_entity["name"] and existing_entity["name"][0].isupper())):
                                 existing_entity["name"] = name # Update to the better raw name
                         
-                        existing_entity["base_importance_score"] = base_importance_score
-                        # mention_count is NOT incremented here; it's done by _update_importance_from_transcript
+                        existing_entity["description"] = description if description else existing_entity["description"]
+                        existing_entity["base_importance_score"] = max(existing_entity["base_importance_score"], base_importance_score) # Take max score
+
+                        # Add all provided aliases to the dynamic alias map for the existing entity's canonical name
+                        # Ensure the existing canonical name itself is mapped to its cleaned form
+                        # This ensures the canonical name always maps to itself in its cleaned form
+                        self.dynamic_alias_map[self._normalize_for_comparison(existing_entity["name"], existing_entity["type"]).lower()] = existing_entity["name"]
+                        for alias_name in aliases:
+                            alias_lower = self._normalize_for_comparison(alias_name, canonical_type).lower() # Normalize alias string as well
+                            # Add alias to map IF it's not already pointing to a different canonical entity
+                            # This prevents "Apple" (fruit) mapping to "Apple" (company) if both exist.
+                            if alias_lower not in self.dynamic_alias_map or \
+                               self.dynamic_alias_map[alias_lower] == existing_entity["name"]:
+                                self.dynamic_alias_map[alias_lower] = existing_entity["name"]
+                                self.llm_log.emit({"type": "debug", "message": f"Added alias '{alias_name}' (norm: '{alias_lower}') for existing entity '{existing_entity['name']}'"})
+
                     else:
                         # Add new entity
+                        new_entity_canonical_name = self._normalize_for_comparison(name, canonical_type) # Already computed
                         new_entity = {
-                            "name": name,
-                            "type": type_, # Use canonical type
+                            "name": new_entity_canonical_name, # Use the derived canonical name for the new entity
+                            "type": canonical_type,
                             "description": description if description else "",
                             "base_importance_score": base_importance_score,
-                            "mention_count": 0, # Initialize to 0, will be updated by _update_importance_from_transcript later
+                            "mention_count": 0, # Initialize to 0, will be updated by _update_importance_from_transcript later (if also mentioned in current transcript)
                             "first_mentioned_idx": current_transcript_idx
                         }
-                        temp_entities_dict[normalized_key_for_llm_entity] = new_entity
-                
+                        temp_entities_dict[entity_key] = new_entity
+
+                        # Add current name and all its aliases to the dynamic alias map
+                        self.dynamic_alias_map[new_entity_canonical_name.lower()] = new_entity_canonical_name
+                        for alias_name in aliases:
+                            alias_lower = self._normalize_for_comparison(alias_name, canonical_type).lower() # Normalize alias string as well
+                            if alias_lower not in self.dynamic_alias_map or \
+                               self.dynamic_alias_map[alias_lower] == new_entity_canonical_name: # Check to avoid overwriting
+                                self.dynamic_alias_map[alias_lower] = new_entity_canonical_name
+                                self.llm_log.emit({"type": "debug", "message": f"Added alias '{alias_name}' (norm: '{alias_lower}') for new entity '{new_entity_canonical_name}'"})
+
                 self.entities = list(temp_entities_dict.values())
                 # Now that the entities list is updated, trigger mention count update for the *current* transcript.
                 # This ensures any newly identified entities in this round get their first mention counted,
                 # and existing entities also get their count incremented if mentioned.
+                # The _update_importance_from_transcript method handles the mention_count, including setting 1 for first mention.
                 self._update_importance_from_transcript(transcript_to_process)
                 
                 self.entities_updated.emit(self.entities)
-                self.last_transcript_processed_idx = current_transcript_idx # Mark this index as processed
+                self.last_transcript_processed_idx = current_transcript_idx 
 
-            time.sleep(2) # Wait a bit before checking for next transcript
+            time.sleep(2) 
 
     def add_transcription(self, text):
-        # Transcriptions are appended here, but processed sequentially in run()
         self.transcriptions.append(text) 
 
     def get_transcriptions(self):
@@ -508,6 +480,10 @@ class LLMThread(QThread):
 
     def get_entities(self):
         return self.entities
+
+    def get_alias_map(self):
+        """Returns the current dynamic alias map."""
+        return self.dynamic_alias_map
 
     def stop(self):
         self.running = False

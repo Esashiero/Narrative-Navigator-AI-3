@@ -1,0 +1,9 @@
+[04:11:31] [WARNING]: LLM proposed entity 'Hendrick Joliet Easterman' (Characters) not found explicitly in transcript or its aliases. Skipping.
+[04:11:31] [WARNING]: LLM proposed entity 'OSS' (Organizations) not found explicitly in transcript or its aliases. Skipping.
+[04:11:31] [WARNING]: LLM proposed entity 'Operation Paperclip' (Concepts/Events) not found explicitly in transcript or its aliases. Skipping.
+[04:11:44] [WARNING]: LLM proposed entity 'Hendrick Joliet Easterman' (Characters) not found explicitly in transcript or its aliases. Skipping.
+[04:11:44] [WARNING]: LLM proposed entity 'Mount Massive Asylum' (Locations) not found explicitly in transcript or its aliases. Skipping.
+[04:11:44] [WARNING]: LLM proposed entity 'Murkoff Corporation' (Organizations) not found explicitly in transcript or its aliases. Skipping.
+[04:11:44] [WARNING]: LLM proposed entity 'OSS' (Organizations) not found explicitly in transcript or its aliases. Skipping.
+[04:11:44] [WARNING]: LLM proposed entity 'Operation Paperclip' (Concepts/Events) not found explicitly in transcript or its aliases. Skipping.
+[04:11:44] [WARNING]: LLM proposed entity 'Cold War' (Concepts/Events) not found explicitly in transcript or its aliases. Skipping.

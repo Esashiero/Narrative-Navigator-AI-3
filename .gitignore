@@ -22,3 +22,4 @@ Thumbs.db
 # Ignore environment files (if any)
 .env
 venv
+._codebase_digest.txt
